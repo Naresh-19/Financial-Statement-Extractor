@@ -1,0 +1,6 @@
+bankstatements/
+table/
+temp*
+__pycache__/
+outputs/
+.env
