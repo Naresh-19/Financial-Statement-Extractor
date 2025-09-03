@@ -5,7 +5,7 @@ import streamlit as st
 from PIL import Image
 import warnings
 from io import BytesIO, StringIO
-import PyPDF2
+import fitz
 
 from bank_statement_modules.camelot_cropper import crop_tables_from_pdf
 from bank_statement_modules.css import streamlit_css
@@ -33,55 +33,47 @@ def handle_password_protected_pdf(uploaded_file, filename):
         f.write(uploaded_file.getbuffer())
     
     try:
-        with open(temp_pdf_path, "rb") as file_handle:
-            pdf_reader = PyPDF2.PdfReader(file_handle)
+        doc = fitz.open(temp_pdf_path)
+        
+        if doc.is_encrypted:
+            st.warning("🔐 This PDF is password protected")
             
-            if pdf_reader.is_encrypted:
-                st.warning("🔐 This PDF is password protected")
-                
-                password = st.text_input(
-                    "Enter PDF password:",
-                    type="password",
-                    key="pdf_password",
-                    help="Enter the password to unlock this PDF",
-                )
-                
-                if password:
-                    with open(temp_pdf_path, "rb") as pdf_file:
-                        encrypted_data = pdf_file.read()
+            password = st.text_input(
+                "Enter PDF password:",
+                type="password",
+                key="pdf_password",
+                help="Enter the password to unlock this PDF",
+            )
+            
+            if password:
+                if doc.authenticate(password):
+                    # Create a new decrypted PDF file with a different name
+                    decrypted_pdf_path = f"temp_decrypted_{filename}"
+                    doc.save(decrypted_pdf_path)
+                    doc.close()
                     
-                    from io import BytesIO
+                    # Remove the original encrypted file and rename decrypted file
+                    import os
+                    os.remove(temp_pdf_path)
+                    os.rename(decrypted_pdf_path, temp_pdf_path)
                     
-                    pdf_stream = BytesIO(encrypted_data)
-                    pdf_reader = PyPDF2.PdfReader(pdf_stream)
-                    
-                    if pdf_reader.decrypt(password):
-                        pdf_writer = PyPDF2.PdfWriter()
-                        for page in pdf_reader.pages:
-                            pdf_writer.add_page(page)
-                        
-                        with open(temp_pdf_path, "wb") as output_file:
-                            pdf_writer.write(output_file)
-                        
-                        pdf_stream.close()
-                        del pdf_reader, pdf_writer, pdf_stream
-                        
-                        st.success("✅ PDF unlocked successfully!")
-                        return temp_pdf_path
-                    else:
-                        pdf_stream.close()
-                        st.error("❌ Incorrect password. Please try again.")
-                        return None
+                    st.success("✅ PDF unlocked successfully!")
+                    return temp_pdf_path
                 else:
-                    st.info("👆 Please enter the password to continue")
+                    doc.close()
+                    st.error("❌ Incorrect password. Please try again.")
                     return None
             else:
-                return temp_pdf_path
+                doc.close()
+                st.info("👆 Please enter the password to continue")
+                return None
+        else:
+            doc.close()
+            return temp_pdf_path
     
     except Exception as e:
         st.error(f"Error processing PDF: {e}")
         return None
-
 
 def process_pdf_extraction(temp_pdf_path, uploaded_filename):
     """Main extraction processing function"""
@@ -155,10 +147,9 @@ def process_pdf_extraction(temp_pdf_path, uploaded_filename):
             extracted_json_texts.append(json_text)
         
         if first_transaction_table_found:
-            # st.success(
-            #     f"Schema successfully detected from Table {schema_detected_from_table} (first transaction table)"
-            # )
-            pass
+            st.success(
+                f"Schema successfully detected from Table {schema_detected_from_table} (first transaction table)"
+            )
         else:
             st.warning(
                 "⚠️ No transaction tables found - used default schema for all tables"

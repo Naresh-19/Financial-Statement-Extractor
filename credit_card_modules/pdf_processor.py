@@ -1,6 +1,6 @@
 import fitz
 from collections import defaultdict
-from config import *
+from config import DATE_REGEX, AMOUNT_REGEX, SUMMARY_BLACKLIST, COLUMN_KEYWORDS, OFFSET
 
 class PDFProcessor:
     @staticmethod
