@@ -1,6 +1,6 @@
 import fitz
 from collections import defaultdict
-from config import DATE_REGEX, AMOUNT_REGEX, SUMMARY_BLACKLIST, COLUMN_KEYWORDS, OFFSET
+from config import DATE_REGEX, AMOUNT_REGEX, COLUMN_KEYWORDS, SUMMARY_BLACKLIST, OFFSET
 
 class PDFProcessor:
     @staticmethod
@@ -86,3 +86,17 @@ class PDFProcessor:
             doc.save(output_path)
         doc.close()
         return modified
+
+    @staticmethod
+    def extract_text_from_pdf(pdf_path, password=None):
+        doc = fitz.open(pdf_path)
+        if doc.needs_pass and password:
+            doc.authenticate(password)
+        
+        extracted_text = ""
+        for page in doc:
+            extracted_text += page.get_text()
+            extracted_text += "\n\n"
+        
+        doc.close()
+        return extracted_text.strip()
