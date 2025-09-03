@@ -47,6 +47,7 @@ class GeminiExtractor:
     - Cross-reference every transaction detail with the ground truth text
     - Ensure each date-description-amount triplet matches exactly
     - Only include the merchant or service name in the Description (exclude customer names, "MR", "MRS", HTML tags, <br>, or personal names)
+    - Remove html tags like <br> and <p> and remove account holder names
     - Ensure Description is concise and only shows the merchant/service name
     - Process transactions in the EXACT ORDER they appear in the ground truth
     - Include ALL transactions without missing any
