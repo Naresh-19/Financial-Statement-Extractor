@@ -11,11 +11,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from dotenv import load_dotenv
 
-from pdf_processor import PDFProcessor
-from image_converter import ImageConverter
-from markdown_processor import MarkdownProcessor
-from gemini_extractor import GeminiExtractor
-from ui_components import UIComponents
+from credit_card_modules.pdf_processor import PDFProcessor
+from credit_card_modules.image_converter import ImageConverter
+from credit_card_modules.markdown_processor import MarkdownProcessor
+from credit_card_modules.gemini_extractor import GeminiExtractor
+from credit_card_modules.ui_components import UIComponents
 from config import DEFAULT_BATCH_SIZE, DEFAULT_DPI
 
 logging.basicConfig(level=logging.INFO)
