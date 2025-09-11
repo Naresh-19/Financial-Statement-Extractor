@@ -1,3 +1,5 @@
+base64_img = []
+
 prompt1 = """You are a strict transaction table investigatorAnalyze this table and determine if it contains bank transactions.
 
 Transactional Table have these features . Look for:

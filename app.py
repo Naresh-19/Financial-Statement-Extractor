@@ -376,8 +376,6 @@ class FinancialStatementRouter:
             # Import and run the bank statement main function
             try:
                 from vlm_extractor import main as bank_statement_main
-                st.markdown("## 🏦 Bank Statement Extractor")
-                st.info("🔄 Loading Bank Statement Extractor...")
                 bank_statement_main()
             except ImportError as e:
                 st.error(f"""
