@@ -119,7 +119,7 @@ Please check If validation fails, you've swapped debit/credit - FIX immediately 
 
 📋 SCHEMA MAPPING:
 - dt: DD-MM-YYYY format
-- desc: COMPLETE description text
+- desc: COMPLETE description text (no truncation)
 - ref: Reference ID (null if none)
 - dr: Debit amount (0.00 if none)
 - cr: Credit amount (0.00 if none)
@@ -138,6 +138,117 @@ Please check If validation fails, you've swapped debit/credit - FIX immediately 
     except Exception as e:
         logging.error(f"Error extracting table with Gemini: {e}")
         return f"Error extracting table: {str(e)}"
+
+
+def enhance_transactions_with_categories_and_entities(transactions_json: list) -> list:
+    """
+    Enhance transactions with expense categories and entity extraction.
+    Processes transactions in batches of 150 to handle up to 299 transactions.
+    """
+    if not transactions_json:
+        logging.info("No transactions to enhance")
+        return transactions_json
+    
+    total_transactions = len(transactions_json)
+    logging.info(f"🏷️ Enhancing {total_transactions} transactions with categories and entities")
+    
+    enhanced_transactions = []
+    batch_size = 150
+    
+    try:
+        # Process in batches
+        for batch_start in range(0, total_transactions, batch_size):
+            batch_end = min(batch_start + batch_size, total_transactions)
+            batch_transactions = transactions_json[batch_start:batch_end]
+            batch_num = (batch_start // batch_size) + 1
+            
+            logging.info(f"📦 Processing batch {batch_num}: transactions {batch_start + 1}-{batch_end}")
+            
+            # Create enhancement prompt
+            enhancement_prompt = f"""You are a financial transaction categorization expert. Analyze each transaction and add expense category and entity name.
+
+**TRANSACTION DATA** (JSON Array): {json.dumps(batch_transactions, indent=2)}
+
+**CATEGORIES** (choose most appropriate):
+- Food & drinks: Restaurants, delivery apps, groceries, cafes, dining
+- Shopping: Retail stores, fashion, electronics, online purchases
+- Entertainment: Movies, games, streaming, events, hobbies
+- Travel: Flights, hotels, booking platforms, tourism
+- Commute: Metro, bus, taxi, cab services, parking
+- Fuel: Petrol pumps, gas stations, vehicle fuel
+- Bills & utilities: Electricity, water, internet, phone, DTH
+- Groceries: Supermarkets, local stores, grocery delivery
+- Medical: Hospitals, medicines, clinics, health services
+- Education: Schools, courses, books, training, fees
+- Fitness: Gyms, sports, health clubs, fitness apps
+- Insurance: Premium payments, policy renewals
+- EMIs & Loans: Loan payments, credit installments
+- Credit bills: Credit card bills, card payments
+- Edge card bill: Specific card bill payments
+- Rent: House rent, property payments
+- Personal care: Salons, cosmetics, personal items
+- Household: Home supplies, maintenance, repairs
+- Family & pets: Family expenses, pet care, veterinary
+- Finance: Investments, mutual funds, trading
+- Money transfers: P2P transfers, remittances
+- ATM: ATM withdrawals, cash transactions
+- Fees & charges: Bank charges, service fees
+- Charity: Donations, charitable contributions
+- Wallets: Digital wallet top-ups, e-wallet transfers
+- Miscellaneous: If unknown or Unidentifiable transactions like numbers etc.
+
+**ENTITY EXTRACTION**:
+- Extract clear merchant names (e.g., "SWIGGY ORDER" → "Swiggy")
+- For ATM: "ATM" or bank name if mentioned
+- For transfers: Extract recipient/sender name
+- Keep names clean and recognizable
+- Use "Unknown" for unclear descriptions
+
+**TASK**: For each transaction, add these two fields:
+- "category": One of the categories above (exact text)
+- "entity": Extracted merchant/entity name
+
+**Extraction Instructions**:
+1. Analyze "desc" for keywords to determine category
+2. Do not change other fields (dt, desc, ref, dr, cr, bal, type)
+3. Ensure "category" and "entity" fields are added to each transaction
+
+**EXAMPLE INPUT**:
+[{{"dt":"01-01-2024","desc":"UPI-SWIGGY INSTAMART-ORDER123","ref":"TXN456","dr":0.00,"cr":0.00,"bal":1500.00,"type":"W"}}]
+
+**EXAMPLE OUTPUT**:
+[{{"dt":"01-01-2024","desc":"UPI-SWIGGY INSTAMART-ORDER123","ref":"TXN456","dr":0.00,"cr":0.00,"bal":1500.00,"type":"W","category":"Groceries","entity":"Swiggy Instamart"}}]
+
+**OUTPUT**: Return enhanced JSON array with same structure + category and entity fields. No markdown, just JSON."""
+            
+            with st.spinner(f"Enhancing batch {batch_num} with categories and entities..."):
+                response = gemini_model.generate_content(enhancement_prompt)
+                enhanced_json = response.text.strip()
+                
+                cleaned_json = clean_and_fix_json(enhanced_json)
+                batch_enhanced = json.loads(cleaned_json)
+                
+                if isinstance(batch_enhanced, list) and len(batch_enhanced) == len(batch_transactions):
+                    enhanced_transactions.extend(batch_enhanced)
+                    logging.info(f"✅ Successfully enhanced batch {batch_num} ({len(batch_enhanced)} transactions)")
+                else:
+                    # Fallback: add default values if API response is malformed
+                    logging.warning(f"⚠️ Batch {batch_num} response format issue, adding default categories")
+                    for transaction in batch_transactions:
+                        transaction['category'] = 'Miscellaneous'
+                        transaction['entity'] = 'Unknown'
+                    enhanced_transactions.extend(batch_transactions)
+        
+        logging.info(f"🎯 Enhancement complete: {len(enhanced_transactions)} transactions processed")
+        return enhanced_transactions
+        
+    except Exception as e:
+        logging.error(f"❌ Error enhancing transactions: {e}")
+        # Fallback: add default values to all transactions
+        for transaction in transactions_json:
+            transaction['category'] = 'Miscellaneous'
+            transaction['entity'] = 'Unknown'
+        return transactions_json
 
 
 def refine_with_camelot_reference_simple(llm_transactions, camelot_df):
@@ -252,7 +363,7 @@ Correction: Swap dr/cr → {{"dt":"01-01-2024","desc":"ATM WITHDRAWAL","dr":500.
             return corrected_transactions
         else:
             logging.warning(
-                f"⚠️ Response format issue - returning original transactions"
+                "⚠️ Response format issue - returning original transactions"
             )
             return llm_transactions
     

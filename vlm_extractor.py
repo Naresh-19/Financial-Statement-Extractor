@@ -1,10 +1,9 @@
-import os
 import logging
 from pathlib import Path
 import streamlit as st
 from PIL import Image
 import warnings
-from io import BytesIO, StringIO
+from io import StringIO
 import fitz
 
 from bank_statement_modules.camelot_cropper import crop_tables_from_pdf
@@ -13,6 +12,7 @@ from bank_statement_modules.ai_functions import (
     is_transaction_table,
     detect_schema_from_first_table,
     extract_table_with_schema,
+    enhance_transactions_with_categories_and_entities,
 )
 from bank_statement_modules.utils import (
     cleanup_temp_files,
@@ -159,7 +159,18 @@ def process_pdf_extraction(temp_pdf_path, uploaded_filename):
             combined_df = combine_json_texts_to_dataframe(
                 extracted_json_texts, cropped_image_paths, temp_pdf_path
             )
-            return combined_df, first_transaction_table_found
+            
+            if combined_df is not None and not combined_df.empty:
+                
+                transactions_list = combined_df.to_dict('records')
+                enhanced_transactions = enhance_transactions_with_categories_and_entities(transactions_list)
+                
+                import pandas as pd
+                enhanced_df = pd.DataFrame(enhanced_transactions)
+                
+                return enhanced_df, first_transaction_table_found
+            else:
+                return combined_df, first_transaction_table_found
         else:
             return None, False
     
@@ -231,23 +242,23 @@ def main():
                 with col1:
                     st.metric("Total Transactions", len(combined_df))
                 with col2:
-                    total_withdrawals = combined_df["withdrawal_dr"].sum()
+                    total_withdrawals = combined_df["withdrawal_dr"].sum() if "withdrawal_dr" in combined_df.columns else combined_df["dr"].sum()
                     st.metric("Total Withdrawals", f"₹{total_withdrawals:,.2f}")
                 with col3:
-                    total_deposits = combined_df["deposit_cr"].sum()
+                    total_deposits = combined_df["deposit_cr"].sum() if "deposit_cr" in combined_df.columns else combined_df["cr"].sum()
                     st.metric("Total Deposits", f"₹{total_deposits:,.2f}")
                 with col4:
                     withdrawal_count = len(
-                        combined_df[combined_df["withdrawal_dr"] > 0]
+                        combined_df[combined_df.get("withdrawal_dr", combined_df.get("dr", 0)) > 0]
                     )
-                    deposit_count = len(combined_df[combined_df["deposit_cr"] > 0])
+                    deposit_count = len(combined_df[combined_df.get("deposit_cr", combined_df.get("cr", 0)) > 0])
                     st.metric("W/D Ratio", f"{withdrawal_count}/{deposit_count}")
                 
                 st.subheader("📋 All Extracted Transactions")
                 st.dataframe(combined_df, use_container_width=True)
                 
                 st.success(
-                    f"✅ Successfully extracted {len(combined_df)} transactions!"
+                    f"✅ Successfully extracted {len(combined_df)} transactions with categories and entities!"
                 )
                 logging.info(
                     f"Extraction complete: {len(combined_df)} transactions ready for download"
