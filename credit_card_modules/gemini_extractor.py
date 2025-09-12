@@ -210,3 +210,110 @@ class GeminiExtractor:
                 print(f"DEBUG: Removed duplicate: {txn}")
         
         return unique_transactions
+        
+    async def enhance_transactions_with_categories_and_entities(self, transactions_json: list):
+        if not transactions_json:
+            print("DEBUG: No transactions to enhance")
+            return transactions_json
+
+        print(f"DEBUG: Enhancing {len(transactions_json)} transactions with categories and entities")
+
+        prompt = f"""You are a financial transaction categorization expert. 
+    Analyze each transaction and add expense category and entity name.
+
+    TRANSACTION DATA (JSON Array): 
+    {json.dumps(transactions_json, indent=2)}
+
+    CATEGORIES (choose most appropriate):
+    - Food & drinks: Restaurants, delivery apps, groceries, cafes, dining
+    - Shopping: Retail stores, fashion, electronics, online purchases
+    - Entertainment: Movies, games, streaming, events, hobbies
+    - Travel: Flights, hotels, booking platforms, tourism
+    - Commute: Metro, bus, taxi, cab services, parking
+    - Fuel: Petrol pumps, gas stations, vehicle fuel
+    - Bills & utilities: Electricity, water, internet, phone, DTH
+    - Groceries: Supermarkets, local stores, grocery delivery
+    - Medical: Hospitals, medicines, clinics, health services
+    - Education: Schools, courses, books, training, fees
+    - Fitness: Gyms, sports, health clubs, fitness apps
+    - Insurance: Premium payments, policy renewals
+    - EMIs & Loans: Loan payments, credit installments
+    - Credit bills: Credit card bills, card payments
+    - Edge card bill: Specific card bill payments
+    - Rent: House rent, property payments
+    - Personal care: Salons, cosmetics, personal items
+    - Household: Home supplies, maintenance, repairs
+    - Family & pets: Family expenses, pet care, veterinary
+    - Finance: Investments, mutual funds, trading
+    - Money transfers: P2P transfers, remittances
+    - ATM: ATM withdrawals, cash transactions
+    - Fees & charges: Bank charges, service fees
+    - Charity: Donations, charitable contributions
+    - Wallets: Digital wallet top-ups, e-wallet transfers
+    - Miscellaneous: If unknown or unidentifiable transactions
+
+    ENTITY EXTRACTION:
+    - Extract clear merchant names from description
+    - For ATM: use "ATM" or bank name if mentioned
+    - For transfers: extract recipient/sender name if visible
+    - Keep names clean and recognizable
+    - Use "Unknown" for unclear descriptions
+
+    INSTRUCTIONS:
+    1. For each transaction, add "category" and "entity" fields
+    2. Keep all existing fields unchanged
+    3. Choose the most appropriate category from the list above
+    4. Extract the clearest entity name from the description
+
+    Return only the JSON array with enhanced transactions. No markdown formatting, no extra text.
+
+    Example output format:
+    [
+        {{
+            "date": "15/06/2024",
+            "description": "AMAZON INDIA",
+            "amount": 1499.00,
+            "type": "Debit",
+            "category": "Shopping",
+            "entity": "Amazon"
+        }}
+    ]"""
+
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.1,
+                "maxOutputTokens": MAX_COMPLETION_TOKENS
+            }
+        }
+        
+        url = f"{self.base_url}?key={self.api_key}"
+        headers = {"Content-Type": "application/json"}
+
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as session:
+                async with session.post(url, headers=headers, json=payload) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        if 'candidates' in result and len(result['candidates']) > 0:
+                            content = result['candidates'][0]['content']['parts'][0]['text'].strip()
+                            
+                            if content.startswith('```json'):
+                                content = content[7:]
+                            if content.endswith('```'):
+                                content = content[:-3]
+                            content = content.strip()
+                            
+                            enhanced_data = json.loads(content)
+                            print(f"DEBUG: Successfully enhanced {len(enhanced_data)} transactions")
+                            return enhanced_data
+                    
+                    print("ERROR: Failed to get valid response from Gemini")
+                    return transactions_json
+                    
+        except json.JSONDecodeError as e:
+            print(f"ERROR: JSON parsing failed: {e}")
+            return transactions_json
+        except Exception as e:
+            print(f"ERROR: Enhancement request failed: {e}")
+            return transactions_json

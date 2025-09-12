@@ -185,7 +185,7 @@ def display_results() -> None:
     st.dataframe(
         display_df.style.format({'Amount': '₹{:,.2f}'}),
         use_container_width=True,
-        height=450
+        height=500  # slightly taller for new columns
     )
     
     csv_data = display_df.to_csv(index=False)
@@ -355,7 +355,6 @@ async def process_pdf_file(uploaded_file, groq_api_key: str, gemini_api_key: str
                 progress_bar.progress(45)
                 
                 dynamic_processor = DynamicMarkdownProcessor(groq_api_key, DEFAULT_BATCH_SIZE, preview_container)
-                
                 markdown_content = await dynamic_processor.process_all_images_with_preview(image_paths)
                 
                 if not markdown_content or not markdown_content.strip():
@@ -367,7 +366,6 @@ async def process_pdf_file(uploaded_file, groq_api_key: str, gemini_api_key: str
                 progress_bar.progress(70)
                 
                 gemini_extractor = GeminiExtractor(gemini_api_key)
-                
                 gemini_result = await gemini_extractor.extract_transactions_from_markdown(
                     markdown_content, extracted_text
                 )
@@ -379,17 +377,24 @@ async def process_pdf_file(uploaded_file, groq_api_key: str, gemini_api_key: str
                 
                 transactions = gemini_extractor.process_gemini_result(gemini_result)
                 
-                progress_bar.progress(85)
-                status_text.markdown("📊 **Finalizing analysis...**")
-                
                 if transactions and len(transactions) > 0:
-                    df = pd.DataFrame(transactions)
+                    # ✅ NEW STEP: Enhance with categories & entities
+                    progress_bar.progress(80)
+                    status_text.markdown("🏷️ **Enhancing transactions with categories & entities...**")
+                    
+                    enhanced_transactions = await gemini_extractor.enhance_transactions_with_categories_and_entities(
+                        transactions
+                    )
+                    
+                    df = pd.DataFrame(enhanced_transactions)
                     
                     df.rename(columns={
                         'date': 'Date',
                         'description': 'Description', 
                         'amount': 'Amount',
-                        'type': 'Type'
+                        'type': 'Type',
+                        'category': 'Category',
+                        'entity': 'Entity'
                     }, inplace=True)
                     
                     state.df = df
@@ -420,7 +425,7 @@ async def process_pdf_file(uploaded_file, groq_api_key: str, gemini_api_key: str
                     progress_bar.progress(100)
                     status_text.markdown("✅ **Processing complete!**")
                     
-                    st.success("🎉 Transactions extracted successfully!")
+                    st.success("🎉 Transactions extracted & enhanced successfully!")
                     st.balloons()
                     
                     return True
@@ -545,7 +550,7 @@ def main():
                             else:
                                 st.error("❌ Incorrect password")
                         except Exception as e:
-                            st.error("❌ Error verifying password")
+                            st.error(f"❌ Error verifying password: {e}")
         
         if state.processing_complete:
             col1, col2 = st.columns([1.3, 0.7], gap="large")
@@ -600,3 +605,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
