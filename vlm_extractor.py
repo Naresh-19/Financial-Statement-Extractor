@@ -181,6 +181,14 @@ def process_pdf_extraction(temp_pdf_path, uploaded_filename):
 
 
 def main():
+    
+    st.set_page_config(
+        page_title="Bank Statement - Transaction Extractor",
+        page_icon="🏦",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
     st.markdown(streamlit_css, unsafe_allow_html=True)
     
     st.title("Bank Statement Transaction Extraction")
