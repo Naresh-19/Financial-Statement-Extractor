@@ -103,7 +103,7 @@ def extract_table_with_schema(image: Image.Image, schema_template: str) -> str:
 - Withdrawal/Payment → amount in "dr", "cr"=0.00
 - Deposit/Credit → amount in "cr", "dr"=0.00
 
-📝 DESCRIPTION: Extract COMPLETE text (no truncation)
+📝 DESCRIPTION: Must keep the entire description/narration.(no truncation)
 
 ⚖️ VALIDATION (VERY CRITICAL - Check EVERY row):
 
