@@ -42,6 +42,27 @@ def ensure_temp_dir(pdf_name: str) -> str:
 # --------------------------------------------------------
 # DataFrame Helpers
 # --------------------------------------------------------
+def expand_compact_json(compact_transactions):
+    """Convert compact JSON format to full schema"""
+    expanded_transactions = []
+    
+    for transaction in compact_transactions:
+        expanded = {
+            "date": transaction.get("dt"),
+            "narration": transaction.get("desc"),
+            "reference_number": transaction.get("ref"),
+            "withdrawal_dr": float(transaction.get("dr", 0.0) or 0.0),
+            "deposit_cr": float(transaction.get("cr", 0.0) or 0.0),
+            "balance": float(transaction.get("bal", 0.0) or 0.0),
+            "transaction_type": "Withdrawal"
+            if str(transaction.get("type", "")).strip().upper() == "W"
+            else "Deposit",
+        }
+        expanded_transactions.append(expanded)
+    
+    return expanded_transactions
+
+
 def combine_json_texts_to_dataframe(json_texts, cropped_image_paths, source_pdf):
     all_records = []
     for idx, json_text in enumerate(json_texts):
@@ -79,10 +100,15 @@ def combine_json_texts_to_dataframe(json_texts, cropped_image_paths, source_pdf)
                 logging.warning(f"Table {idx+1}: Expected array, got {type(transactions)}")
                 continue
 
-            for r in transactions:
+            # Expand compact schema → full schema
+            expanded = expand_compact_json(transactions)
+
+            # Attach metadata
+            for r in expanded:
                 r["_source_table"] = Path(cropped_image_paths[idx]).name if idx < len(cropped_image_paths) else ""
                 r["_source_pdf"] = Path(source_pdf).name if source_pdf else ""
-            all_records.extend(transactions)
+
+            all_records.extend(expanded)
 
         except Exception as e:
             logging.warning(f"Failed to process table {idx+1}: {e}")
@@ -94,38 +120,7 @@ def combine_json_texts_to_dataframe(json_texts, cropped_image_paths, source_pdf)
 
     df = pd.DataFrame(all_records)
 
-    expected_cols = ["dt", "desc", "ref", "dr", "cr", "bal", "type"]
-    for col in expected_cols:
-        if col not in df.columns:
-            df[col] = None
-
-    # Rename to standard schema
-    df = df.rename(
-        columns={
-            "dt": "date",
-            "desc": "description",
-            "ref": "reference",
-            "dr": "withdrawal_dr",
-            "cr": "deposit_cr",
-            "bal": "balance",
-            "type": "txn_type",
-        }
-    )
-
-    # Normalize transaction types
-    if "txn_type" in df.columns:
-        df["txn_type"] = df["txn_type"].replace({
-            "d": "Debit",
-            "D": "Debit",
-            "w": "Withdrawal",
-            "W": "Withdrawal",
-            "c": "Credit",
-            "C": "Credit",
-            "dp": "Deposit",
-            "DP": "Deposit"
-        })
-
-    # Keep metadata, just comment out removal for now
+    # Drop metadata if not needed
     if "_source_table" in df.columns:
         df.drop(columns=["_source_table"], inplace=True)
     if "_source_pdf" in df.columns:

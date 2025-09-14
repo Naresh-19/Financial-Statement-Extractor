@@ -2,6 +2,10 @@ import os
 import json
 import logging
 import warnings
+
+# Fix Streamlit file watcher issue on Windows
+os.environ["STREAMLIT_SERVER_FILE_WATCHER_TYPE"] = "none"
+
 import streamlit as st
 from pathlib import Path
 from PIL import Image
@@ -25,6 +29,7 @@ from bank_statement_modules.file_utils import (
 from bank_statement_modules.config import DEFAULT_SCHEMA
 
 warnings.filterwarnings("ignore", category=UserWarning, message=".*meta parameter.*")
+warnings.filterwarnings("ignore", message=".*Paths don't have the same drive.*")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 def handle_password_protected_pdf(uploaded_file, filename):
@@ -194,19 +199,40 @@ def process_pdf_extraction(temp_pdf_path, uploaded_filename, use_camelot_refiner
 
                     camelot_df, summary = extract_bank_statement(temp_pdf_path)
                     if camelot_df is not None and not camelot_df.empty:
+                        # Store original data as backup
+                        original_transactions = combined_df.to_dict(orient="records")
+                        
                         refined_transactions = refine_with_camelot_reference(
-                            combined_df.to_dict(orient="records"),
+                            original_transactions,
                             camelot_df,
                             reordered_schema or DEFAULT_SCHEMA,
                         )
-                        combined_df = combine_json_texts_to_dataframe(
-                            [json.dumps(refined_transactions)], cropped_image_paths, temp_pdf_path
-                        )
-                        st.success("✨ Final Camelot refinement applied to all transactions")
+                        
+                        # Ensure refinement actually returned valid data
+                        if refined_transactions and len(refined_transactions) > 0:
+                            try:
+                                refined_df = combine_json_texts_to_dataframe(
+                                    [json.dumps(refined_transactions)], cropped_image_paths, temp_pdf_path
+                                )
+                                print(refined_df.head())
+                                # Only use refined data if it's valid and not empty
+                                if refined_df is not None and not refined_df.empty:
+                                    combined_df = refined_df
+                                    st.success("✨ Final Camelot refinement applied to all transactions")
+                                else:
+                                    logging.warning("Refined dataframe is empty, keeping original data")
+                                    st.info("ℹ️ Refinement produced empty results, keeping original extraction")
+                            except Exception as df_error:
+                                logging.warning(f"Error creating refined dataframe: {df_error}, keeping original")
+                                st.info("ℹ️ Refinement data processing failed, keeping original extraction")
+                        else:
+                            logging.warning("Refinement returned empty transactions, keeping original data")
+                            st.info("ℹ️ Refinement returned empty results, keeping original extraction")
                     else:
                         logging.info("No valid Camelot transactions found, skipping refinement")
                 except Exception as e:
                     logging.warning(f"Camelot refinement skipped: {e}")
+                    st.info(f"ℹ️ Refinement failed ({str(e)}), keeping original extraction")
 
         progress.progress(1.0)
         status_text.text("✅ Extraction completed!")

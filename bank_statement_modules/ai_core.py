@@ -158,56 +158,28 @@ Please check If validation fails, you've swapped debit/credit - FIX immediately 
         logging.error(f"Error extracting table with Gemini: {e}")
         return f"Error extracting table: {str(e)}"
 
-def clean_and_fix_json(raw_text: str) -> str:
-    """
-    Try to sanitize model output into a valid JSON array string.
-    - Strip code fences
-    - Extract first [...] JSON array if present
-    - Fallback: collect {...} objects and wrap into [...]
-    - Try a few heuristic fixes (trailing commas, single->double quotes)
-    Returns a string (always at least "[]")
-    """
-    if not raw_text or not raw_text.strip():
-        return "[]"
-    try:
-        txt = raw_text.strip()
-        # remove fenced code blocks
-        txt = re.sub(r'```(?:json)?\s*', '', txt, flags=re.IGNORECASE)
-        txt = txt.replace('```', '')
-
-        # try to extract the first JSON array
-        m = re.search(r'(\[.*\])', txt, flags=re.DOTALL)
-        if m:
-            candidate = m.group(1)
-        else:
-            # fallback: find all { ... } blocks and combine
-            objs = re.findall(r'\{[^{}]*\}', txt, flags=re.DOTALL)
-            if objs:
-                candidate = "[" + ",".join(objs) + "]"
-            else:
-                candidate = txt
-
-        # common fixes
-        candidate = re.sub(r',\s*]', ']', candidate)   # trailing comma before closing ]
-        candidate = re.sub(r',\s*}', '}', candidate)   # trailing comma before closing }
-        candidate = candidate.replace('\\n', ' ')
-        candidate = candidate.replace('\\', '')
-
-        # Try parse; if fails, replace single quotes with double quotes and try again
-        try:
-            json.loads(candidate)
-            return candidate
-        except Exception:
-            alt = candidate.replace("'", '"')
-            alt = re.sub(r',\s*]', ']', alt)
-            try:
-                json.loads(alt)
-                return alt
-            except Exception:
-                # final fallback: return empty array
-                return "[]"
-    except Exception:
-        return "[]"
+def clean_and_fix_json(json_text):
+    """Clean and fix common JSON formatting issues"""
+    import re
+    
+    json_text = re.sub(r"```\s*json", "", json_text)
+    json_text = re.sub(r"```", "", json_text)
+    
+    start_idx = json_text.find("[")
+    end_idx = json_text.rfind("]")
+    
+    if start_idx != -1 and end_idx != -1:
+        json_text = json_text[start_idx : end_idx + 1]
+    
+    json_text = re.sub(r",\s*}", "}", json_text)
+    json_text = re.sub(r",\s*]", "]", json_text)
+    
+    def fix_string_content(match):
+        content = match.group(1)
+        return '"' + re.sub(r"\s+", " ", content.strip()) + '"'
+    
+    json_text = re.sub(r'"([^"]*(?:\n[^"]*)*)"', fix_string_content, json_text)
+    return json_text
 
 def refine_with_camelot_reference(llm_transactions, camelot_df, detected_schema: str = DEFAULT_SCHEMA):
     """Refine extracted transactions by comparing LLM output with Camelot reference table."""
@@ -224,51 +196,152 @@ def refine_with_camelot_reference(llm_transactions, camelot_df, detected_schema:
         ]
         camelot_raw_json = json.dumps(camelot_raw_data, indent=2)
 
-        refinement_prompt = f"""
-You are a **bank statement transaction validator and corrector**.  
-Your job is to refine the extracted JSON transactions by comparing them with Camelot’s raw extracted table.
+        refinement_prompt = f"""You are a bank transaction validator with expertise in data analysis.
 
-📌 **Detected Schema** (strictly follow this):
-{detected_schema}
+**DETECTED SCHEMA** (Your column order from primary extraction): {detected_schema}
 
-📌 **Source 1: LLM Extracted JSON**
-{llm_transactions_json}
+**SOURCE 1** - Our Perfect Extraction (may have wrong dr/cr swaps): {llm_transactions_json}
 
-📌 **Source 2: Camelot Raw Table**
-{camelot_raw_json}
+**SOURCE 2** - Raw Camelot Data (no headers, just row values in array format): {camelot_raw_json}
 
-🔍 **Rules for Validation & Correction**:
-1. Preserve schema: fields = dt, desc, ref, dr, cr, bal, type
-2. Map amounts correctly:
-   - dr → Debit (money deducted) → txn_type = "W"
-   - cr → Credit (money added) → txn_type = "D"
-3. Validate balances row-by-row:
-   - Ascending dates (oldest→newest): balance[n] = balance[n-1] + cr - dr
-   - Descending dates (newest→oldest): balance[n-1] = balance[n] + dr - cr
-4. If validation fails, fix by:
-   - Swapping debit/credit values
-   - Correcting amounts using Camelot table as reference
-5. Ensure **full description text** is preserved (no truncation).
-6. Keep reference IDs (ref) where available, otherwise null.
-7. If any row cannot be validated, make the **closest correction** but do not drop rows.
+**YOUR TASK**: Fix SOURCE 1 debit/credit errors using SOURCE 2 as reference for validation.
 
-⚠️ Output strictly the **corrected JSON array only** (no markdown, no extra text).
-"""
+**ANALYSIS INSTRUCTIONS**:
+1. **Understand Schema Order**: Look at the detected schema to understand our column sequence
+2. **Analyze Raw Camelot**: Each row in SOURCE 2 is [value1, value2, value3, ...]
+   - Identify which values are dates (patterns like DD-MM-YYYY)
+   - Identify which values are descriptions (text content)
+   - Identify which values are amounts (numeric values)
+   - Determine if amounts represent debits or credits based on:
+     * Position in the row (left amounts often debits, right amounts often credits)
+     * Negative values (usually debits)
+     * Context from descriptions (ATM/Withdrawal = debit, Deposit/Credit = credit)
+
+3. **Match Transactions**:
+   - Match SOURCE 1 and SOURCE 2 transactions by:
+     * Date similarity (exact or close dates)
+     * Description keyword overlap
+     * Amount value similarity
+
+4. **Correct Errors**:
+   - If Camelot suggests transaction is DEBIT but our transaction has dr=0, cr>0 → SWAP dr and cr
+   - If Camelot suggests transaction is CREDIT but our transaction has cr=0, dr>0 → SWAP dr and cr
+   - Keep all other fields (dt, desc, ref, bal, type) exactly the same
+   - Only make corrections when you're confident about the match
+
+⚖️ VALIDATION (VERY CRITICAL - Check EVERY row):
+
+FOR ASCENDING DATES (oldest→newest):
+Row N: balance_previous_row + credit - debit = balance_current_row
+Example: 1000 + 500 - 0 = 1500 ✓
+
+FOR DESCENDED DATES (newest→oldest):
+Row N: balance_current_row + debit - credit = balance_previous_row
+Example: 1300 + 200 - 0 = 1500 ✓
+
+Please check If validation fails, you've swapped debit/credit - FIX immediately by swapping credit and debit!
+
+**EXAMPLE ANALYSIS**:
+Schema: [{{"dt":"DD-MM-YYYY","desc":"DESC","ref":null,"dr":0.00,"cr":0.00,"bal":0.00,"type":"W"}}]
+Our data: {{"dt":"01-01-2024","desc":"ATM WITHDRAWAL","dr":0.00,"cr":500.00,"bal":1000.00}}
+Camelot row: ["01-01-2024", "ATM", "WITHDRAWAL", "500.00", "0.00", "1000.00"]
+
+Analysis: Date matches, description "ATM WITHDRAWAL" matches "ATM" + "WITHDRAWAL", amount 500 appears in position suggesting debit
+Correction: Swap dr/cr → {{"dt":"01-01-2024","desc":"ATM WITHDRAWAL","dr":500.00,"cr":0.00,"bal":1000.00}}
+
+**CRITICAL**: Use EXACT field names from the detected schema: {detected_schema}
+- Use "dt" NOT "date"
+- Use "desc" NOT "narration" 
+- Use "dr" NOT "withdrawal_dr"
+- Use "cr" NOT "deposit_cr"
+- Use "bal" NOT "balance"
+- Use "type" NOT "transaction_type"
+
+**OUTPUT**: Return corrected JSON array in exact same format as SOURCE 1 with EXACT field names from schema. No explanations, just the corrected JSON."""
 
         response = gemini_model.generate_content(refinement_prompt)
-        corrected_raw = response.text.strip()
+        logging.info("Gemini refinement response received")
+
+        # Handle Gemini API safety/content filtering issues
+        try:
+            corrected_raw = response.text.strip()
+            if not corrected_raw:
+                raise ValueError("Empty response from Gemini")
+        except Exception as e:
+            logging.warning(f"Failed to get response text from Gemini: {e}")
+            logging.info("Falling back to original LLM transactions due to Gemini API issue")
+            return llm_transactions
         
+        # Clean and fix the JSON response
         cleaned_json = clean_and_fix_json(corrected_raw)
 
         try:
             corrected_transactions = json.loads(cleaned_json)
-            if isinstance(corrected_transactions, list):
-                logging.info("✅ Refinement successful with Camelot reference")
-                return corrected_transactions
-        except Exception:
-            logging.warning("❌ Refinement produced invalid JSON, falling back to LLM output")
+            if isinstance(corrected_transactions, list) and len(corrected_transactions) > 0:
+                # Validate that each transaction has the required fields
+                sample_transaction = corrected_transactions[0]
+                if isinstance(sample_transaction, dict):
+                    # Check if the transaction has the expected schema fields
+                    schema_dict = json.loads(detected_schema)[0]
+                    expected_fields = set(schema_dict.keys())
+                    actual_fields = set(sample_transaction.keys())
+                    
+                    if expected_fields.issubset(actual_fields):
+                        # Additional field name mapping as a safety net
+                        mapped_transactions = []
+                        for transaction in corrected_transactions:
+                            if isinstance(transaction, dict):
+                                # Map any incorrect field names to correct ones
+                                mapped_transaction = {}
+                                for key, value in transaction.items():
+                                    # Map common incorrect field names to correct ones
+                                    field_mapping = {
+                                        'date': 'dt',
+                                        'narration': 'desc',
+                                        'withdrawal_dr': 'dr', 
+                                        'deposit_cr': 'cr',
+                                        'balance': 'bal',
+                                        'transaction_type': 'type',
+                                        'reference_number': 'ref'
+                                    }
+                                    correct_key = field_mapping.get(key, key)
+                                    mapped_transaction[correct_key] = value
+                                mapped_transactions.append(mapped_transaction)
+                            else:
+                                mapped_transactions.append(transaction)
+                        
+                        logging.info("✅ Refinement successful with Camelot reference")
+                        return mapped_transactions
+                    else:
+                        logging.warning(f"❌ Refined transactions missing expected fields. Expected: {expected_fields}, Got: {actual_fields}")
+                        return llm_transactions
+                else:
+                    logging.warning("❌ Refined transactions contain non-dict objects")
+                    return llm_transactions
+            else:
+                logging.warning("❌ Refined response is not a valid list or is empty")
+                return llm_transactions
+        except json.JSONDecodeError as e:
+            logging.warning(f"❌ Refinement produced invalid JSON: {e}")
+            # Try to extract partial valid JSON
+            try:
+                # Look for the first complete JSON object or array in the response
+                import re
+                json_match = re.search(r'(\[.*?\])', corrected_raw, re.DOTALL)
+                if json_match:
+                    partial_json = json_match.group(1)
+                    partial_transactions = json.loads(partial_json)
+                    if isinstance(partial_transactions, list) and len(partial_transactions) > 0:
+                        logging.info("✅ Partial refinement successful")
+                        return partial_transactions
+            except Exception as partial_error:
+                logging.warning(f"❌ Partial JSON extraction also failed: {partial_error}")
+            
+            return llm_transactions
+        except Exception as e:
+            logging.warning(f"❌ Unexpected error during refinement processing: {e}")
+            return llm_transactions
 
-        return llm_transactions
     except Exception as e:
         logging.error(f"Error refining with Camelot reference: {e}")
         return llm_transactions

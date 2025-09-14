@@ -69,7 +69,7 @@ class BankStatementExtractor:
                         date_part = match.group()
                         parsed_date = datetime.strptime(date_part, date_format)
                         return parsed_date.strftime('%d %b %Y')
-                except:
+                except Exception:
                     continue
         
         return date_str
@@ -290,12 +290,12 @@ class BankStatementExtractor:
             if progress_callback:
                 progress_callback("Attempting Camelot extraction...")
             
-            tables = camelot.read_pdf(pdf_path, pages='all', flavor='lattice',password=password)
+            tables = camelot.read_pdf(pdf_path, pages='all', flavor='stream', edge_tol=75, row_tol=10,password=password)
             
             if not tables:
                 if progress_callback:
-                    progress_callback("Camelot lattice failed, trying stream flavor...")
-                tables = camelot.read_pdf(pdf_path, pages='all', flavor='stream', edge_tol=75, row_tol=10,password=password)
+                    progress_callback("Camelot stream failed, trying lattice flavor...")
+                tables = camelot.read_pdf(pdf_path, pages='all', flavor='lattice', edge_tol=75, row_tol=10,password=password)
 
             if tables:
                 if progress_callback:
